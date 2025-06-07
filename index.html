@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <title>Lovely</title>
+    <style>
+        @font-face {
+            font-family: 'MyFont';
+            src: url('./DF.ttf') format('truetype');
+        }
+
+        body,
+        html {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: linear-gradient(135deg, #4a4a4a, #2c2c2c);
+            color: #a5dbff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            height: 100%;
+        }
+
+        #ui {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 320px;
+            padding: 15px 20px;
+            border-radius: 12px;
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.6);
+            z-index: 1000;
+            backdrop-filter: blur(8px);
+        }
+
+        #ui label {
+            font-weight: 600;
+            font-size: 15px;
+            display: block;
+            margin-bottom: 6px;
+            color: #a8c0ff;
+        }
+
+        #ui textarea {
+            width: 100%;
+            height: 70px;
+            margin-bottom: 12px;
+            background: #1b1b1b;
+            border: 1px solid #3d3d3d;
+            color: #ddd;
+            font-size: 14px;
+            resize: vertical;
+            padding: 10px 12px;
+            border-radius: 8px;
+            font-family: 'Courier New', Courier, monospace;
+            transition: border-color 0.3s ease;
+        }
+
+        #ui textarea:focus {
+            border-color: #66aaff;
+            outline: none;
+            background: #222;
+        }
+
+        #startBtn {
+            width: 100%;
+            padding: 12px 0;
+            background: #4a90e2;
+            border: none;
+            color: white;
+            font-weight: 700;
+            font-size: 17px;
+            cursor: pointer;
+            border-radius: 10px;
+            margin-bottom: 12px;
+            box-shadow: 0 5px 15px rgba(74, 144, 226, 0.6);
+            transition: background-color 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        #startBtn:hover {
+            background: #6aa0ff;
+            box-shadow: 0 8px 25px rgba(106, 160, 255, 0.8);
+        }
+
+        #shareLink {
+            display: none;
+            word-break: break-word;
+            color: #4a90e2;
+            cursor: pointer;
+            text-decoration: underline;
+            font-size: 15px;
+            user-select: all;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="ui">
+        <label>Nhập các dòng chữ (mỗi dòng một text):</label><br />
+        <textarea id="inputText" placeholder="Ví dụ: Hello\nWorld"></textarea><br />
+        <label>Nhập URL ảnh (mỗi dòng một link ảnh):</label><br />
+        <textarea id="imageLinks"
+            placeholder="Ví dụ: https://example.com/image1.png\nhttps://example.com/image2.png"></textarea><br />
+        <label>Chọn nhạc:</label>
+        <select id="musicSelector">
+            <option value="">-- Không chọn --</option>
+            <option value="./s.mp3">Bản nhạc 1</option>
+            <option value="./music/song2.mp3">Bản nhạc 2</option>
+            <option value="./music/song3.mp3">Bản nhạc 3</option>
+        </select><br />
+
+        <button id="startBtn">Bắt đầu hiệu ứng</button><br />
+        <a id="shareLink" target="_blank" title="Click để mở link trong tab mới"></a>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
+
+    <script>
+
+        // Mã hóa base64url (UTF-8 safe)
+        const encodeData = s => btoa(encodeURIComponent(s).replace(/%(\w{2})/g, (_, x) => String.fromCharCode('0x' + x))).replace(/[+/=]/g, c => ({ '+': '-', '/': '_', '=': '' }[c] || ''));
+        const decodeData = s => {
+            s = s.replace(/[-_]/g, c => ({ '-': '+', '_': '/' }[c]));
+            while (s.length % 4) s += '=';
+            return decodeURIComponent(atob(s).split('').map(c => '%' + c.charCodeAt(0).toString(16).padStart(2, '0')).join(''));
+        }
+
+
+        // Lấy dữ liệu từ URL hash
+        function getDataFromURL() {
+            if (location.hash.startsWith('#data=')) {
+                const encoded = location.hash.slice(6);
+                const jsonStr = decodeData(encoded);
+                if (jsonStr) {
+                    try {
+                        return JSON.parse(jsonStr);
+                    } catch {
+                        return null;
+                    }
+                }
+            }
+            return null;
+        }
+
+
+        // --- DOM elements ---
+        const inputTextEl = document.getElementById('inputText');
+        const imageLinksEl = document.getElementById('imageLinks');
+        const startBtn = document.getElementById('startBtn');
+        const shareLinkEl = document.getElementById('shareLink');
+
+        const musicSelector = document.getElementById('musicSelector');
+        let audio = null;
+
+        function playMusic(musicFile) {
+            if (audio) {
+                audio.pause();
+                audio = null;
+            }
+            if (musicFile) {
+                audio = new Audio(musicFile);
+                audio.loop = true;
+                audio.volume = 0.5;
+                audio.play().catch(e => {
+                    console.warn('Không thể phát nhạc tự động:', e);
+                });
+            }
+        }
+        function updateURLParam(param, value) {
+            const url = new URL(window.location);
+            if (value) {
+                url.searchParams.set(param, value);
+            } else {
+                url.searchParams.delete(param);
+            }
+            window.history.replaceState({}, '', url);
+        }
+
+        // Khi thay đổi chọn nhạc, cập nhật URL và phát nhạc
+        musicSelector.addEventListener('change', () => {
+            const selectedMusic = musicSelector.value;
+            updateURLParam('music', selectedMusic);
+            playMusic(selectedMusic);
+        });
+
+        // Khi trang load, lấy nhạc từ URL rồi set selector và phát
+        window.addEventListener('load', () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            const musicFromURL = urlParams.get('music');
+            if (musicFromURL) {
+                //musicSelector.value = musicFromURL;
+                playMusic(musicFromURL);
+            }
+        });
+
+
+        // --- Lưu dữ liệu hiệu ứng ---
+        let images = [];
+        let textLines = [];
+
+        // --- Hàm tạo hiệu ứng (dùng THREE.js) ---
+        // Dưới đây là code hiệu ứng bạn cung cấp đã được tinh chỉnh cho đủ
+        // Tạo cảnh, camera, renderer
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 3000);
+        camera.position.z = 400;
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // Star field background
+        const starGeo = new THREE.BufferGeometry();
+        const starCount = 800;
+        const starPos = [];
+        for (let i = 0; i < starCount; i++) {
+            const r = THREE.MathUtils.randFloat(900, 1200);
+            const theta = Math.acos(THREE.MathUtils.randFloatSpread(2));
+            const phi = THREE.MathUtils.randFloatSpread(2 * Math.PI);
+            starPos.push(
+                r * Math.sin(theta) * Math.cos(phi),
+                r * Math.sin(theta) * Math.sin(phi),
+                r * Math.cos(theta)
+            );
+        }
+        starGeo.setAttribute('position', new THREE.Float32BufferAttribute(starPos, 3));
+        const starsMat = new THREE.PointsMaterial({ color: 0xffffff, size: 5, transparent: true, opacity: 0.9 });
+        scene.add(new THREE.Points(starGeo, starsMat));
+
+        // Convert starPos array to THREE.Vector3 for easier use
+        const starPositions = [];
+        for (let i = 0; i < starCount; i++) {
+            starPositions.push(new THREE.Vector3(
+                starPos[i * 3],
+                starPos[i * 3 + 1],
+                starPos[i * 3 + 2]
+            ));
+        }
+
+        // Shooting stars parameters (random moving)
+        const shootingStars = [];
+        const shootingStarCount = 5;
+
+        // Create shooting stars as small glowing points with trail effect
+        for (let i = 0; i < shootingStarCount; i++) {
+            const geometry = new THREE.BufferGeometry();
+            const positions = new Float32Array(10 * 3);
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+            const material = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 });
+            const line = new THREE.Line(geometry, material);
+
+            const pos = new THREE.Vector3(
+                THREE.MathUtils.randFloatSpread(1000),
+                THREE.MathUtils.randFloat(400, 700),
+                THREE.MathUtils.randFloatSpread(1000)
+            );
+
+            const velocity = new THREE.Vector3(0.8, -1, 0.2).normalize().multiplyScalar(5 + Math.random() * 5);
+
+            shootingStars.push({ line, positions, pos, velocity });
+            scene.add(line);
+        }
+
+        // Shooting stars that start from star positions
+        const shootingStarsFromStars = [];
+        const shootingStarCountFromStars = 30;
+
+        for (let i = 0; i < shootingStarCountFromStars; i++) {
+            const geometry = new THREE.BufferGeometry();
+            const positions = new Float32Array(10 * 3);
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+            const material = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 });
+            const line = new THREE.Line(geometry, material);
+
+            const startIndex = Math.floor(Math.random() * starPositions.length);
+            const pos = starPositions[startIndex].clone();
+
+            // Velocity direction: from center to star pos + random spread
+            const dir = pos.clone().normalize();
+            const velocity = dir.clone().add(new THREE.Vector3(
+                THREE.MathUtils.randFloatSpread(0.5),
+                THREE.MathUtils.randFloatSpread(0.5),
+                THREE.MathUtils.randFloatSpread(0.5)
+            )).normalize().multiplyScalar(5 + Math.random() * 5);
+
+            shootingStarsFromStars.push({ line, positions, pos, velocity });
+            scene.add(line);
+        }
+
+        // Images URLs (mặc định rỗng)
+        images = [];
+
+        const textureLoader = new THREE.TextureLoader();
+        const group = new THREE.Group();
+        scene.add(group);
+
+        const boxCount = 20;
+
+        function randomPosOnSphere(radius) {
+            const theta = Math.acos(THREE.MathUtils.randFloatSpread(2));
+            const phi = THREE.MathUtils.randFloatSpread(2 * Math.PI);
+            return new THREE.Vector3(
+                radius * Math.sin(theta) * Math.cos(phi),
+                radius * Math.sin(theta) * Math.sin(phi),
+                radius * Math.cos(theta)
+            );
+        }
+
+        function createTextSprite(message) {
+            const canvas = document.createElement('canvas');
+            const size = 512;
+            canvas.width = size;
+            canvas.height = 128;
+            const ctx = canvas.getContext('2d');
+
+            // Mảng màu chữ fill và stroke để đổi sau mỗi 5s
+            const fillColors = ['white', '#ff6347', '#32cd32', '#ffa500', '#00ffff'];
+            const strokeColors = ['#a5dbff', '#ff4500', '#228b22', '#ff8c00', '#008b8b'];
+
+            let colorIndex = 0;
+
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.minFilter = THREE.LinearFilter;
+            const material = new THREE.SpriteMaterial({ map: texture, transparent: true });
+            const sprite = new THREE.Sprite(material);
+            sprite.scale.set(120, 30, 1);
+
+            function drawText() {
+                ctx.clearRect(0, 0, size, 128);
+
+                ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                ctx.fillRect(0, 0, size, 128);
+
+                ctx.font = 'bold 48px MyFont';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+
+                ctx.fillStyle = fillColors[colorIndex];
+                ctx.lineWidth = 6;
+                ctx.strokeStyle = strokeColors[colorIndex];
+
+                ctx.strokeText(message, size / 2, 64);
+                ctx.fillText(message, size / 2, 64);
+
+                texture.needsUpdate = true;
+            }
+
+            drawText();
+
+            setInterval(() => {
+                colorIndex = (colorIndex + 1) % fillColors.length;
+                drawText();
+            }, 5000);
+
+            // Tự động gọi drawText lại khi font load xong (không async)
+            document.fonts.load('48px MyFont').then(() => {
+                drawText();
+            });
+
+            return sprite;
+        }
+
+
+        const planes = [];
+        const labels = [];
+        const imagePositions = [];
+        const textPositions = [];
+
+        const radiusImage = 300;
+        const radiusText = 350;
+
+        function initScene() {
+            group.clear();
+            planes.length = 0;
+            labels.length = 0;
+            imagePositions.length = 0;
+            textPositions.length = 0;
+
+            if (images.length === 0) {
+                // Nếu chưa có ảnh thì thôi, không tạo plane nào
+                return;
+            }
+
+            for (let i = 0; i < boxCount; i++) {
+                const size = 20 + Math.random() * 10;
+                const geometry = new THREE.PlaneGeometry(size, size);
+                const texture = textureLoader.load(images[i % images.length]);
+                const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true });
+                const plane = new THREE.Mesh(geometry, material);
+
+                const posImg = randomPosOnSphere(radiusImage);
+                const posTxt = randomPosOnSphere(radiusText);
+
+                imagePositions.push(posImg);
+                textPositions.push(posTxt);
+
+                plane.position.set(0, 0, 0);
+                plane.scale.set(0.05, 0.05, 0.05);
+                plane.userData = {
+                    progress: 0,
+                    speed: 0.0005 + Math.random() * 0.0005,
+                    delayOffset: i * 0.02,
+                };
+
+                group.add(plane);
+                planes.push(plane);
+                labels.push(null);
+            }
+        }
+
+        function updateLabelText(index, newText) {
+            if (index < 0 || index >= labels.length) return;
+
+            const oldLabel = labels[index];
+            if (oldLabel) {
+                scene.remove(oldLabel);
+                oldLabel.material.map.dispose();
+                oldLabel.material.dispose();
+            }
+            if (newText.trim() === "") {
+                labels[index] = null;
+                return;
+            }
+            const newLabel = createTextSprite(newText);
+            newLabel.position.copy(textPositions[index]);
+            scene.add(newLabel);
+            labels[index] = newLabel;
+        }
+
+        // Khởi tạo cảnh ban đầu (chưa có ảnh và chữ)
+        initScene();
+
+        // Mouse + touch control cho camera xoay
+        let targetRotX = 0;
+        let targetRotY = 0;
+        let currentRotX = 0;
+        let currentRotY = 0;
+        const maxRotX = Math.PI / 6;
+        const maxRotY = Math.PI / 4;
+
+        function updateTargetRotation(clientX, clientY) {
+            const mx = (clientX / window.innerWidth) * 2 - 1;
+            const my = (clientY / window.innerHeight) * 2 - 1;
+            targetRotY = mx * maxRotY;
+            targetRotX = my * maxRotX;
+        }
+
+        window.addEventListener('mousemove', e => {
+            updateTargetRotation(e.clientX, e.clientY);
+        });
+
+        window.addEventListener('touchmove', e => {
+            if (e.touches.length > 0) {
+                const touch = e.touches[0];
+                updateTargetRotation(touch.clientX, touch.clientY);
+            }
+        }, { passive: true });
+
+        // Hàm cập nhật link share
+        function updateShareLink(textLines, imageLinks, music) {
+            const obj = { textLines, imageLinks, music };  // Đã có music trong obj
+            const jsonStr = JSON.stringify(obj);
+            const encoded = encodeData(jsonStr);
+
+            const url = new URL(location.origin + location.pathname);
+            url.hash = 'data=' + encoded;
+
+            shareLinkEl.textContent = url.toString();
+            shareLinkEl.href = url.toString();
+            shareLinkEl.title = 'Click để mở link trong tab mới';
+            shareLinkEl.style.display = 'inline-block';
+        }
+
+
+
+        startBtn.addEventListener('click', () => {
+            const inputText = inputTextEl.value.trim();
+            const inputImages = imageLinksEl.value.trim();
+            const selectedMusic = musicSelector.value;
+
+            textLines = inputText.length ? inputText.split('\n').filter(l => l.trim() !== '') : [];
+            images = inputImages.length ? inputImages.split('\n').filter(l => l.trim() !== '') : [];
+
+            // Khởi tạo lại cảnh với ảnh mới
+            initScene();
+
+            // Cập nhật text label theo input, lặp lại cho đủ planes
+            for (let i = 0; i < planes.length; i++) {
+                let text = "";
+                if (textLines.length > 0) {
+                    text = textLines[i % textLines.length];
+                }
+                updateLabelText(i, text);
+            }
+
+            // Cập nhật link share hiển thị, truyền luôn music
+            updateShareLink(textLines, images, selectedMusic);
+
+            // Phát nhạc
+            playMusic(selectedMusic);
+        });
+
+
+        // Hàm load dữ liệu từ URL (nếu có)
+        function loadFromURL() {
+            const data = getDataFromURL();
+            if (!data) return false;
+
+            if (data.textLines) {
+                textLines = data.textLines;
+                inputTextEl.value = textLines.join('\n');
+            }
+            if (data.imageLinks) {
+                images = data.imageLinks;
+                imageLinksEl.value = images.join('\n');
+            }
+            if (data.music) {
+                musicSelector.value = data.music;
+                playMusic(data.music);
+            }
+
+            initScene();
+
+            for (let i = 0; i < planes.length; i++) {
+                let text = "";
+                if (textLines.length > 0) {
+                    text = textLines[i % textLines.length];
+                }
+                updateLabelText(i, text);
+            }
+
+            updateShareLink(textLines, images, data.music);
+            return true;
+        }
+
+
+        // --- Animation loop ---
+        function animate() {
+            requestAnimationFrame(animate);
+            currentRotX += (targetRotX - currentRotX) * 0.05;
+            currentRotY += (targetRotY - currentRotY) * 0.05;
+
+            const rCam = 400;
+            camera.position.x = rCam * Math.sin(currentRotY) * Math.cos(currentRotX);
+            camera.position.y = rCam * Math.sin(currentRotX);
+            camera.position.z = rCam * Math.cos(currentRotY) * Math.cos(currentRotX);
+            camera.lookAt(0, 0, 0);
+
+            planes.forEach((plane, i) => {
+                let prog = plane.userData.progress - plane.userData.delayOffset;
+                if (prog < 0) prog = 0;
+                else if (prog > 1) prog = 1;
+
+                plane.position.lerpVectors(new THREE.Vector3(0, 0, 0), imagePositions[i], prog);
+                let scale = 0.05 + prog * (2 - 0.05);
+                plane.scale.set(scale, scale, scale);
+                plane.userData.progress += plane.userData.speed;
+                if (plane.userData.progress > 1 + plane.userData.delayOffset) plane.userData.progress = 0;
+
+                const label = labels[i];
+                if (label) label.position.lerpVectors(new THREE.Vector3(0, 0, 0), textPositions[i], prog);
+            });
+
+            // Update shooting stars (random)
+            shootingStars.forEach(ss => {
+                ss.pos.add(ss.velocity);
+                for (let i = 0; i < 10; i++) {
+                    const idx = i * 3;
+                    ss.positions[idx] = ss.pos.x - ss.velocity.x * i * 0.8;
+                    ss.positions[idx + 1] = ss.pos.y - ss.velocity.y * i * 0.8;
+                    ss.positions[idx + 2] = ss.pos.z - ss.velocity.z * i * 0.8;
+                }
+                ss.line.geometry.attributes.position.needsUpdate = true;
+                if (ss.pos.y < -500) {
+                    ss.pos.set(
+                        THREE.MathUtils.randFloatSpread(1000),
+                        THREE.MathUtils.randFloat(400, 700),
+                        THREE.MathUtils.randFloatSpread(1000)
+                    );
+                }
+            });
+
+            // Update shooting stars from stars
+            shootingStarsFromStars.forEach(ss => {
+                ss.pos.add(ss.velocity);
+                for (let i = 0; i < 10; i++) {
+                    const idx = i * 3;
+                    ss.positions[idx] = ss.pos.x - ss.velocity.x * i * 0.5;
+                    ss.positions[idx + 1] = ss.pos.y - ss.velocity.y * i * 0.5;
+                    ss.positions[idx + 2] = ss.pos.z - ss.velocity.z * i * 0.5;
+                }
+                ss.line.geometry.attributes.position.needsUpdate = true;
+
+                if (ss.pos.length() > 1300) {
+                    const startIndex = Math.floor(Math.random() * starPositions.length);
+                    ss.pos.copy(starPositions[startIndex]);
+                    const dir = ss.pos.clone().normalize();
+                    ss.velocity.copy(dir.add(new THREE.Vector3(
+                        THREE.MathUtils.randFloatSpread(0.5),
+                        THREE.MathUtils.randFloatSpread(0.5),
+                        THREE.MathUtils.randFloatSpread(0.5)
+                    )).normalize().multiplyScalar(5 + Math.random() * 5));
+                }
+            });
+
+            renderer.render(scene, camera);
+        }
+
+        // Khởi động animation
+        animate();
+
+        // Load dữ liệu nếu có từ URL
+        // Ẩn UI nếu load dữ liệu từ URL
+        if (loadFromURL()) {
+            document.getElementById('ui').style.display = 'none';
+        } else {
+            shareLinkEl.style.display = 'none';
+        }
+
+        // Resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+
+</html>
